@@ -1,4 +1,4 @@
-import { buildAiStrategyCompilerSystemPrompt } from '../backtestCharts/src/lib/aiStrategyCompilerContext.js'
+import { buildAiStrategyCompilerSystemPrompt } from './context.js'
 import { logProxyError } from './proxyDiagnostics.js'
 
 const GROK_URL = 'https://api.x.ai/v1/chat/completions'
