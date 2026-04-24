@@ -10,10 +10,11 @@ dotenv.config()
 const PORT = Number(process.env.PORT) || 4010
 const TAAPI_SECRET = String(process.env.TAAPI_SECRET || '').trim()
 const TAAPI_ORIGIN = 'https://api.taapi.io'
+const isVercel = Boolean(process.env.VERCEL)
 
 if (!TAAPI_SECRET) {
   console.error('FATAL: Set TAAPI_SECRET in .env (see .env.example)')
-  process.exit(1)
+  if (!isVercel) process.exit(1)
 }
 
 const app = express()
@@ -50,6 +51,10 @@ app.post('/ai/compile-strategy', async (req, res) => {
  * The browser never needs the Taapi secret when using this proxy.
  */
 app.use(async (req, res) => {
+  if (!TAAPI_SECRET) {
+    res.status(503).json({ error: 'Server misconfigured: set TAAPI_SECRET' })
+    return
+  }
   const upstreamUrl = new URL(req.originalUrl || '/', `${TAAPI_ORIGIN}/`)
   upstreamUrl.searchParams.delete('secret')
   upstreamUrl.searchParams.set('secret', TAAPI_SECRET)
@@ -115,7 +120,11 @@ app.use(async (req, res) => {
   }
 })
 
-app.listen(PORT, () => {
-  console.log(`taapi proxy → ${TAAPI_ORIGIN} (listening on ${PORT})`)
-  console.log(`AI compile → POST http://localhost:${PORT}/ai/compile-strategy`)
-})
+export default app
+
+if (!isVercel) {
+  app.listen(PORT, () => {
+    console.log(`taapi proxy → ${TAAPI_ORIGIN} (listening on ${PORT})`)
+    console.log(`AI compile → POST http://localhost:${PORT}/ai/compile-strategy`)
+  })
+}
