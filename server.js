@@ -3,6 +3,7 @@ import dotenv from 'dotenv'
 import express from 'express'
 
 import { compileStrategyFromNaturalLanguage } from './aiCompileStrategy.js'
+import { logProxyError, redactUrlForLog, sendProxyJsonError } from './proxyDiagnostics.js'
 
 dotenv.config()
 
@@ -32,15 +33,15 @@ app.post('/ai/compile-strategy', async (req, res) => {
           ? req.body.prompt
           : ''
     if (!String(instruction).trim()) {
-      res.status(400).json({ error: 'Missing "instruction" (or legacy "prompt") string in JSON body' })
+      const msg = 'Missing "instruction" (or legacy "prompt") string in JSON body'
+      console.error('[ai/compile-strategy]', msg)
+      res.status(400).json({ error: msg })
       return
     }
     const envelope = await compileStrategyFromNaturalLanguage(instruction)
     res.status(200).json(envelope)
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    console.error('[ai/compile-strategy]', msg)
-    res.status(502).json({ error: msg })
+    sendProxyJsonError(res, 502, 'ai/compile-strategy', e, { path: '/ai/compile-strategy' })
   }
 })
 
@@ -49,24 +50,33 @@ app.post('/ai/compile-strategy', async (req, res) => {
  * The browser never needs the Taapi secret when using this proxy.
  */
 app.use(async (req, res) => {
-  try {
-    const pathAndQuery = req.originalUrl || '/'
-    const url = new URL(pathAndQuery, `${TAAPI_ORIGIN}/`)
-    url.searchParams.delete('secret')
-    url.searchParams.set('secret', TAAPI_SECRET)
+  const upstreamUrl = new URL(req.originalUrl || '/', `${TAAPI_ORIGIN}/`)
+  upstreamUrl.searchParams.delete('secret')
+  upstreamUrl.searchParams.set('secret', TAAPI_SECRET)
+  const urlToFetch = upstreamUrl.toString()
+  const logUrl = redactUrlForLog(urlToFetch)
 
+  try {
     if (req.method === 'GET' || req.method === 'HEAD') {
-      const upstream = await fetch(url.toString(), {
+      const upstream = await fetch(urlToFetch, {
         method: req.method,
         headers: { accept: 'application/json' },
       })
+      const text = await upstream.text()
+      if (!upstream.ok) {
+        console.error('[taapi-proxy] upstream GET failed', {
+          requestUrl: logUrl,
+          httpStatus: upstream.status,
+          bodyLength: text.length,
+          body: text.slice(0, 8000),
+        })
+      }
       res.status(upstream.status)
       const ct = upstream.headers.get('content-type')
       if (ct) {
         res.setHeader('content-type', ct)
       }
-      const buf = Buffer.from(await upstream.arrayBuffer())
-      res.end(buf)
+      res.send(Buffer.from(text, 'utf8'))
       return
     }
 
@@ -75,21 +85,33 @@ app.use(async (req, res) => {
         req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)
           ? { ...req.body, secret: TAAPI_SECRET }
           : { secret: TAAPI_SECRET }
-      const upstream = await fetch(url.toString(), {
+      const upstream = await fetch(urlToFetch, {
         method: 'POST',
         headers: { 'content-type': 'application/json', accept: 'application/json' },
         body: JSON.stringify(body),
       })
       const text = await upstream.text()
+      if (!upstream.ok) {
+        console.error('[taapi-proxy] upstream POST failed', {
+          requestUrl: logUrl,
+          httpStatus: upstream.status,
+          bodyLength: text.length,
+          body: text.slice(0, 8000),
+        })
+      }
       res.status(upstream.status).type('application/json').send(text)
       return
     }
 
-    res.status(405).json({ error: 'Method not allowed' })
+    const msg = `Method not allowed: ${req.method}`
+    console.error('[taapi-proxy]', msg, { path: req.originalUrl })
+    res.status(405).json({ error: msg })
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    console.error('[taapi-proxy]', msg)
-    res.status(502).json({ error: msg })
+    sendProxyJsonError(res, 502, 'taapi-proxy', e, {
+      method: req.method,
+      path: req.originalUrl,
+      upstreamTarget: logUrl,
+    })
   }
 })
 

@@ -1,4 +1,5 @@
 import { buildAiStrategyCompilerSystemPrompt } from '../backtestCharts/src/lib/aiStrategyCompilerContext.js'
+import { logProxyError } from './proxyDiagnostics.js'
 
 const GROK_URL = 'https://api.x.ai/v1/chat/completions'
 
@@ -10,40 +11,47 @@ export function parseJsonFromLlmText(text) {
   return JSON.parse(body)
 }
 
-/** Demo strategy when GROK_API_KEY is unset — matches the canonical Bollinger + TP + bars example. */
+/** Demo strategy when GROK_API_KEY is unset — VWAP mean-reversion long+short example. */
 export function mockCompiledStrategyEnvelope() {
+  const vwapSrc = { type: 'catalog', catalogId: 'vwap', figureKey: 'value', params: {} }
   return {
     version: 1,
     strategy: {
       initialBalance: 10_000,
       startBarIndex: 0,
-      endBarIndex: 1_000_000,
+      endBarIndex: 9_999_999,
       buyRule: {
         source: { type: 'price', field: 'close' },
         op: 'lt',
-        rhs: {
-          kind: 'indicator',
-          source: { type: 'catalog', catalogId: 'bbands', figureKey: 'lower', params: { period: '20', stddev: '2' } },
-        },
+        rhs: { kind: 'indicatorPct', source: vwapSrc, pct: 99.7 },
       },
       sellRule: {
         source: { type: 'price', field: 'close' },
         op: 'gte',
-        rhs: {
-          kind: 'indicator',
-          source: { type: 'catalog', catalogId: 'bbands', figureKey: 'mid', params: { period: '20', stddev: '2' } },
-        },
+        rhs: { kind: 'indicator', source: vwapSrc },
+      },
+      shortRule: {
+        source: { type: 'price', field: 'close' },
+        op: 'gt',
+        rhs: { kind: 'indicatorPct', source: vwapSrc, pct: 100.3 },
+      },
+      shortSellRule: {
+        source: { type: 'price', field: 'close' },
+        op: 'lte',
+        rhs: { kind: 'indicator', source: vwapSrc },
       },
       exits: [
-        { kind: 'takeProfitPct', pct: 2 },
-        { kind: 'barsHeld', bars: 20 },
+        { kind: 'stopLossPct', pct: 0.5 },
+        { kind: 'barsHeld', bars: 10 },
       ],
     },
     meta: {
-      title: 'Mock Bollinger long (GROK_API_KEY empty)',
+      title: 'Mock VWAP mean-reversion long+short (GROK_API_KEY empty)',
       assumptions: [
-        'GROK_API_KEY is not set — returning a fixed example strategy.',
-        'sellRule fires before auxiliary exits when both apply on the same bar.',
+        'GROK_API_KEY is not set — returning a fixed VWAP mean-reversion example.',
+        'Long: close < VWAP*0.997; exit when close >= VWAP.',
+        'Short: close > VWAP*1.003; cover when close <= VWAP.',
+        'Stop-loss 0.5% (auto-inverted for shorts), max 10 bars per trade.',
       ],
       unsupportedRequests: [],
     },
@@ -74,26 +82,49 @@ async function compileWithGrok(instruction, opts) {
   })
   const text = await res.text()
   if (!res.ok) {
-    let msg = text || res.statusText
+    let msg = (text || res.statusText || '(no body)').trim()
     try {
       const j = JSON.parse(text)
-      if (j?.error?.message) msg = j.error.message
+      if (j?.error?.message) {
+        msg = String(j.error.message)
+        const code = j.error?.code != null ? ` code=${j.error.code}` : ''
+        const type = j.error?.type != null ? ` type=${j.error.type}` : ''
+        msg = `${msg}${code}${type}`
+      } else if (typeof j?.message === 'string') {
+        msg = j.message
+      }
     } catch {
-      // ignore
+      // keep raw body as msg
     }
-    throw new Error(`Grok HTTP ${res.status}: ${msg}`)
+    const err = new Error(`Grok HTTP ${res.status}: ${msg}`)
+    logProxyError('grok', err, { status: res.status, bodyPreview: text.slice(0, 2000) })
+    throw err
   }
   let data
   try {
     data = JSON.parse(text)
-  } catch {
-    throw new Error('Grok returned non-JSON')
+  } catch (parseErr) {
+    const err = new Error(`Grok response is not JSON: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}. Body preview: ${text.slice(0, 500)}`)
+    logProxyError('grok', err)
+    throw err
   }
   const content = data?.choices?.[0]?.message?.content
   if (typeof content !== 'string' || !content.trim()) {
-    throw new Error('Grok returned empty content')
+    const err = new Error(
+      `Grok returned empty message content. Raw keys: ${data && typeof data === 'object' ? Object.keys(data).join(',') : typeof data}. Preview: ${text.slice(0, 800)}`,
+    )
+    logProxyError('grok', err)
+    throw err
   }
-  return parseJsonFromLlmText(content)
+  try {
+    return parseJsonFromLlmText(content)
+  } catch (parseErr) {
+    const err = new Error(
+      `Strategy JSON parse failed: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}. Model output preview: ${String(content).slice(0, 1200)}`,
+    )
+    logProxyError('grok', err)
+    throw err
+  }
 }
 
 /**
