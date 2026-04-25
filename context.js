@@ -94,12 +94,19 @@ Always use { "type": "catalog", "catalogId", "figureKey", "params" } for indicat
 
 Price series: { "type": "price", "field": "close"|"open"|"high"|"low" }
 
+Candle pattern: { "type": "pattern", "patternId": string, "params": { key: number, ... } }
+  - patternId MUST be one of the IDs listed in the CANDLE PATTERN CATALOG below.
+  - params keys/types must match that entry's params[]. Omit params (or pass {}) for patterns with no params.
+  - Pattern sources are only valid with the "detected" and "notDetected" operators (no rhs).
+
 === CONDITIONS ===
-Leaf: { "source": SignalSource, "op": "lt"|"gt"|"lte"|"gte"|"eq"|"crossesAbove"|"crossesBelow", "rhs": Rhs }
+Indicator/price leaf: { "source": SignalSource, "op": "lt"|"gt"|"lte"|"gte"|"eq"|"crossesAbove"|"crossesBelow", "rhs": Rhs }
 Rhs variants:
   { "kind": "number", "value": number }
   { "kind": "indicator", "source": SignalSource }
   { "kind": "indicatorPct", "source": SignalSource, "pct": number }   ← evaluates to (indicator * pct / 100)
+
+Pattern leaf (NO rhs field): { "source": { "type": "pattern", ... }, "op": "detected"|"notDetected" }
 
 PERCENTAGE DEVIATION via indicatorPct:
   "0.3% below VWAP"  → rhs = { "kind": "indicatorPct", "source": vwap, "pct": 99.7 }   (= VWAP * 0.997)
@@ -122,6 +129,7 @@ Group: { "kind": "group", "op": "AND"|"OR", "children": [ RuleExpression, ... ] 
 
 === OUTPUT ENVELOPE ===
 The "interval" field in strategy is OPTIONAL — include it ONLY when the user explicitly names a timeframe (e.g. "on 15m", "1h chart", "daily candles"). Omit it if the user does not specify a timeframe. Valid values: "1m","5m","15m","30m","1h","2h","4h","12h","1d","1w".
+The "positionSizePct" field is OPTIONAL — include it only when the user specifies a position size (e.g. "use 50% of balance", "risk 25%"). Omit for full-balance strategies; the engine defaults to 100.
 {
   "version": 1,
   "strategy": {
@@ -129,6 +137,7 @@ The "interval" field in strategy is OPTIONAL — include it ONLY when the user e
     "startBarIndex": 0,
     "endBarIndex": 9999999,
     "interval": "15m",              (OPTIONAL — omit when user does not specify a timeframe)
+    "positionSizePct": 50,          (OPTIONAL — percent of available balance per trade, default 100)
     "buyRule": RuleExpression,
     "sellRule": RuleExpression,
     "shortRule": RuleExpression,      (OPTIONAL — omit for long-only strategies)
@@ -140,6 +149,53 @@ The "interval" field in strategy is OPTIONAL — include it ONLY when the user e
     "assumptions": string[],
     "unsupportedRequests": string[]
   }
+}
+
+=== CANDLE PATTERN CATALOG ===
+Use exactly these patternId strings. Patterns with params show key: type (default).
+
+Single-bar (no params):
+  hammer, invertedHammer, doji, dragonflyDoji, gravestoneDoji,
+  bullishMarubozu, bearishMarubozu, spinningTop
+
+Single-bar (with params):
+  hangingMan      { trendBars: int (5, min 3, max 20) }
+  shootingStar    { trendBars: int (5, min 3, max 20) }
+
+Multi-bar (no params):
+  bullishEngulfing, bearishEngulfing, bullishHarami, bearishHarami,
+  tweezersBottom, tweezersTop, insideBar,
+  morningStar, eveningStar, threeWhiteSoldiers, threeBlackCrows
+
+Streak (configurable count):
+  nGreenCandles   { n: int (3, min 2, max 20) }
+  nRedCandles     { n: int (3, min 2, max 20) }
+  nHigherHighs    { n: int (3, min 2, max 20) }
+  nLowerLows      { n: int (3, min 2, max 20) }
+
+=== CANDLE PATTERN EXAMPLE ===
+Strategy: "buy on bullish engulfing, sell on bearish engulfing, stop-loss 1%"
+{
+  "buyRule":  { "source": { "type": "pattern", "patternId": "bullishEngulfing", "params": {} }, "op": "detected" },
+  "sellRule": { "source": { "type": "pattern", "patternId": "bearishEngulfing", "params": {} }, "op": "detected" },
+  "exits": [{ "kind": "stopLossPct", "pct": 1 }]
+}
+
+Strategy: "enter long on hammer with RSI below 35, exit on shooting star or 3 red candles in a row"
+{
+  "buyRule": {
+    "kind": "group", "op": "AND", "children": [
+      { "source": { "type": "pattern", "patternId": "hammer", "params": {} }, "op": "detected" },
+      { "source": { "type": "catalog", "catalogId": "rsi", "figureKey": "value", "params": { "period": "14" } }, "op": "lt", "rhs": { "kind": "number", "value": 35 } }
+    ]
+  },
+  "sellRule": {
+    "kind": "group", "op": "OR", "children": [
+      { "source": { "type": "pattern", "patternId": "shootingStar", "params": { "trendBars": 5 } }, "op": "detected" },
+      { "source": { "type": "pattern", "patternId": "nRedCandles", "params": { "n": 3 } }, "op": "detected" }
+    ]
+  },
+  "exits": []
 }
 
 === VWAP MEAN-REVERSION EXAMPLE (bidirectional) ===
