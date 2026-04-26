@@ -15,7 +15,7 @@ import { FAMOUS_TAAPI_INDICATORS } from './taapiIndicatorCatalog.js'
  * }>}
  */
 export function getAllowedIndicatorsForAiCompiler() {
-  return FAMOUS_TAAPI_INDICATORS.map((e) => {
+  return FAMOUS_TAAPI_INDICATORS.filter((e) => e.figures.length > 0 && e.apiPath).map((e) => {
     const row = {
       catalogId: e.id,
       label: e.label,
@@ -92,7 +92,7 @@ const AI_STRATEGY_COMPILER_SYSTEM_PROMPT_HEAD = `You compile natural-language tr
 === SIGNAL SOURCES (prefer catalog) ===
 Always use { "type": "catalog", "catalogId", "figureKey", "params" } for indicators. Do NOT emit { "type": "indicator", "instanceId", ... } unless the user explicitly supplies chart instance bindings.
 
-Price series: { "type": "price", "field": "close"|"open"|"high"|"low" }
+Price series: { "type": "price", "field": "close"|"open"|"high"|"low"|"volume" }
 
 Candle pattern: { "type": "pattern", "patternId": string, "params": { key: number, ... } }
   - patternId MUST be one of the IDs listed in the CANDLE PATTERN CATALOG below.
@@ -208,9 +208,23 @@ Strategy: "enter long when close dips 0.3% below VWAP, enter short when close ri
   "exits": [{"kind":"stopLossPct","pct":0.5}]
 }
 
+=== EXIT-ONLY STRATEGY EXAMPLE ===
+Strategy: "buy when close crosses above 20 SMA, take-profit 4%, stop-loss 1.5%, exit after 20 bars"
+{
+  "buyRule":  { "source": {"type":"price","field":"close"}, "op": "crossesAbove", "rhs": {"kind":"indicator","source":{"type":"catalog","catalogId":"sma","figureKey":"v","params":{"period":"20"}}} },
+  "sellRule": { "source": {"type":"price","field":"close"}, "op": "lt", "rhs": {"kind":"number","value":0} },
+  "exits": [
+    {"kind":"takeProfitPct","pct":4},
+    {"kind":"stopLossPct","pct":1.5},
+    {"kind":"barsHeld","bars":20}
+  ]
+}
+Note: sellRule is a never-true placeholder (close < 0). ALL exits are handled by exits[]. sellRule MUST always be present — never omit it.
+
 === PLACEMENT RULES ===
 - Indicator/price exits → sellRule / shortSellRule.
 - Time / % / bars / clock exits → exits[] (order: TP before SL before bars).
 - Use crossesAbove/crossesBelow only for true crosses; "below band" = "lt" on close vs band.
+- sellRule is ALWAYS required. When all exits are in exits[] and there is no signal-based sell, set sellRule to the never-true placeholder: { "source": {"type":"price","field":"close"}, "op": "lt", "rhs": {"kind":"number","value":0} }
 
 If the user asks for an indicator not in CATALOG_JSON, set "strategy" to null and explain in meta.unsupportedRequests. Never invent catalogId or figureKey.`
