@@ -4,6 +4,7 @@ import express from 'express'
 
 import { compileStrategyFromNaturalLanguage } from './aiCompileStrategy.js'
 import { logProxyError, redactUrlForLog, sendProxyJsonError } from './proxyDiagnostics.js'
+import { aiCompilePromptLogger } from './supabasePromptLogger.js'
 
 dotenv.config()
 
@@ -39,6 +40,7 @@ app.post('/ai/compile-strategy', async (req, res) => {
       res.status(400).json({ error: msg })
       return
     }
+    await aiCompilePromptLogger.logAiCompilePrompt(instruction)
     const envelope = await compileStrategyFromNaturalLanguage(instruction)
     res.status(200).json(envelope)
   } catch (e) {
