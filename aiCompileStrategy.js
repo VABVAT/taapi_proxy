@@ -1,7 +1,7 @@
 import { buildAiStrategyCompilerSystemPrompt } from './context.js'
 import { logProxyError } from './proxyDiagnostics.js'
 
-const GROK_URL = 'https://api.x.ai/v1/chat/completions'
+const OPENAI_URL = 'https://api.openai.com/v1/chat/completions'
 
 /** @param {string} text */
 export function parseJsonFromLlmText(text) {
@@ -11,7 +11,7 @@ export function parseJsonFromLlmText(text) {
   return JSON.parse(body)
 }
 
-/** Demo strategy when GROK_API_KEY is unset — VWAP mean-reversion long+short example. */
+/** Demo strategy when OPENAI_API_KEY is unset - VWAP mean-reversion long+short example. */
 export function mockCompiledStrategyEnvelope() {
   const vwapSrc = { type: 'catalog', catalogId: 'vwap', figureKey: 'value', params: {} }
   return {
@@ -46,9 +46,9 @@ export function mockCompiledStrategyEnvelope() {
       ],
     },
     meta: {
-      title: 'Mock VWAP mean-reversion long+short (GROK_API_KEY empty)',
+      title: 'Mock VWAP mean-reversion long+short (OPENAI_API_KEY empty)',
       assumptions: [
-        'GROK_API_KEY is not set — returning a fixed VWAP mean-reversion example.',
+        'OPENAI_API_KEY is not set - returning a fixed VWAP mean-reversion example.',
         'Long: close < VWAP*0.997; exit when close >= VWAP.',
         'Short: close > VWAP*1.003; cover when close <= VWAP.',
         'Stop-loss 0.5% (auto-inverted for shorts), max 10 bars per trade.',
@@ -62,10 +62,10 @@ export function mockCompiledStrategyEnvelope() {
  * @param {string} instruction
  * @param {{ apiKey: string, model?: string }} opts
  */
-async function compileWithGrok(instruction, opts) {
-  const model = String(opts.model || process.env.GROK_MODEL || 'grok-2-latest').trim()
+async function compileWithOpenAI(instruction, opts) {
+  const model = String(opts.model || process.env.OPENAI_MODEL || 'gpt-4o-mini').trim()
   const systemPrompt = buildAiStrategyCompilerSystemPrompt()
-  const res = await fetch(GROK_URL, {
+  const res = await fetch(OPENAI_URL, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -96,24 +96,24 @@ async function compileWithGrok(instruction, opts) {
     } catch {
       // keep raw body as msg
     }
-    const err = new Error(`Grok HTTP ${res.status}: ${msg}`)
-    logProxyError('grok', err, { status: res.status, bodyPreview: text.slice(0, 2000) })
+    const err = new Error(`OpenAI HTTP ${res.status}: ${msg}`)
+    logProxyError('openai', err, { status: res.status, bodyPreview: text.slice(0, 2000) })
     throw err
   }
   let data
   try {
     data = JSON.parse(text)
   } catch (parseErr) {
-    const err = new Error(`Grok response is not JSON: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}. Body preview: ${text.slice(0, 500)}`)
-    logProxyError('grok', err)
+    const err = new Error(`OpenAI response is not JSON: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}. Body preview: ${text.slice(0, 500)}`)
+    logProxyError('openai', err)
     throw err
   }
   const content = data?.choices?.[0]?.message?.content
   if (typeof content !== 'string' || !content.trim()) {
     const err = new Error(
-      `Grok returned empty message content. Raw keys: ${data && typeof data === 'object' ? Object.keys(data).join(',') : typeof data}. Preview: ${text.slice(0, 800)}`,
+      `OpenAI returned empty message content. Raw keys: ${data && typeof data === 'object' ? Object.keys(data).join(',') : typeof data}. Preview: ${text.slice(0, 800)}`,
     )
-    logProxyError('grok', err)
+    logProxyError('openai', err)
     throw err
   }
   try {
@@ -122,7 +122,7 @@ async function compileWithGrok(instruction, opts) {
     const err = new Error(
       `Strategy JSON parse failed: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}. Model output preview: ${String(content).slice(0, 1200)}`,
     )
-    logProxyError('grok', err)
+    logProxyError('openai', err)
     throw err
   }
 }
@@ -131,9 +131,9 @@ async function compileWithGrok(instruction, opts) {
  * @param {string} instruction
  */
 export async function compileStrategyFromNaturalLanguage(instruction) {
-  const key = String(process.env.GROK_API_KEY || '').trim()
+  const key = String(process.env.OPENAI_API_KEY || '').trim()
   if (!key) {
     return mockCompiledStrategyEnvelope()
   }
-  return compileWithGrok(String(instruction || '').trim(), { apiKey: key })
+  return compileWithOpenAI(String(instruction || '').trim(), { apiKey: key })
 }

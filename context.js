@@ -37,7 +37,7 @@ export function getAllowedIndicatorsForAiCompiler() {
   })
 }
 
-/** Compact JSON string suitable for appending to a Grok user message or storing in proxy config. */
+/** Compact JSON string suitable for appending to an LLM user message or storing in proxy config. */
 export function getAllowedIndicatorsForAiCompilerJson() {
   return JSON.stringify(getAllowedIndicatorsForAiCompiler())
 }

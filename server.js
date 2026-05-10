@@ -24,7 +24,7 @@ app.use(cors({ origin: true, credentials: true }))
 app.use(express.json({ limit: '5mb' }))
 
 /**
- * Natural language → backtestCharts strategy JSON (via Grok when GROK_API_KEY is set; otherwise mock).
+ * Natural language -> backtestCharts strategy JSON (via OpenAI when OPENAI_API_KEY is set; otherwise mock).
  */
 app.post('/ai/compile-strategy', async (req, res) => {
   try {
